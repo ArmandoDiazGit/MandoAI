@@ -11,6 +11,7 @@ export default defineConfig([
     files: ['**/*.{ts,tsx}'],
     rules: {
       "react-hooks/set-state-in-effect": "off",
+      "@typescript-eslint/no-explicit-any": "off",
     },
     extends: [
       js.configs.recommended,

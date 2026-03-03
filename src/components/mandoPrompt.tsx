@@ -1,43 +1,76 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Loader2, AlertCircle, Trash2, Zap } from "lucide-react";
 import type { ResponseItem } from "../models/responseItem";
 import { Toaster, toast } from "sonner";
+import { generate } from "../services/talkTomandoAPI";
+import SkeletonLoading from "../UI/skeletonLoader/skeletonLoading";
 
 function MandoPrompt() {
   const [prompt, setPrompt] = useState("");
-  const [response, setResponse] = useState("");
+  const [response, setResponse] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [history, setHistory] = useState<ResponseItem[]>([]);
   const [expandedHistory, setExpandedHistory] = useState<string | null>(null);
+  const controllerRef = useRef<AbortController | null>(null);
 
-  function handleSubmit() {
-    if (!prompt.trim()) {
+  async function handleSubmit() {
+    const trimmed = prompt.trim();
+    if (!trimmed) {
       setError("Please enter a prompt before submitting.");
       return;
     }
+    controllerRef.current?.abort();
+
+    const controller = new AbortController();
+    controllerRef.current = controller;
 
     setIsLoading(true);
     setError("");
     setResponse("");
 
-    setTimeout(() => {
-      const randomResponse = 'test response for: "' + prompt.trim() + '"';
-      setResponse(randomResponse);
-      setIsLoading(false);
+    const result = await generate(trimmed, { signal: controller.signal });
 
-      const newEntry = {
+    if (!result.ok && result.error === "__CANCELLED__") {
+      setIsLoading(false);
+      if (controllerRef.current === controller) controllerRef.current = null;
+      return;
+    }
+
+    if (!result.ok) {
+      setIsLoading(false);
+      setError(result.error);
+
+      setHistory((prev) => [
+        {
+          id: Date.now().toString(),
+          prompt: trimmed,
+          response: result.error,
+          timestamp: Date.now(),
+        },
+        ...prev,
+      ]);
+
+      if (controllerRef.current === controller) controllerRef.current = null;
+      return;
+    }
+
+    setResponse(result.data);
+    setHistory((prev) => [
+      {
         id: Date.now().toString(),
-        prompt: prompt.trim(),
-        response: randomResponse,
+        prompt: trimmed,
+        response: result.data,
         timestamp: Date.now(),
-      };
-      setHistory((prev) => [newEntry, ...prev]);
-    }, 1500);
+      },
+      ...prev,
+    ]);
+
+    setIsLoading(false);
+    if (controllerRef.current === controller) controllerRef.current = null;
   }
 
   function toggleHistoryItem(item: ResponseItem) {
-    console.log(item);
     setPrompt(item.prompt);
     setResponse(item.response);
     setError("");
@@ -53,6 +86,17 @@ function MandoPrompt() {
   function handleClearHistory() {
     setHistory([]);
     toast.success("History cleared");
+  }
+
+  function handleStop() {
+    controllerRef.current?.abort();
+    controllerRef.current = null;
+    setIsLoading(false);
+    setError("Response generation stopped by user.");
+
+    setTimeout(() => {
+      setError("");
+    }, 3000);
   }
 
   return (
@@ -73,9 +117,7 @@ function MandoPrompt() {
             </header>
 
             <div className="row g-4">
-              <div
-                className="col-12"
-              >
+              <div className="col-12">
                 <div className="mb-3">
                   <textarea
                     data-testid="prompt-input"
@@ -103,14 +145,13 @@ function MandoPrompt() {
                             size={18}
                             className="spinner-border spinner-border-sm border-0"
                           />
-                          Generating…
+                          Generating response...
                         </span>
                       ) : (
                         "Submit"
                       )}
                     </button>
                   </div>
-
                   <div className="col-12 col-sm-auto d-grid">
                     <button
                       type="button"
@@ -122,6 +163,19 @@ function MandoPrompt() {
                       Clear
                     </button>
                   </div>
+
+                  {isLoading && (
+                    <div className="col-12 col-sm-auto d-grid">
+                      <button
+                        type="button"
+                        data-testid="stop-btn"
+                        className="btn btn-outline-danger"
+                        onClick={handleStop}
+                      >
+                        Stop
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {error && (
@@ -143,7 +197,9 @@ function MandoPrompt() {
                   >
                     {isLoading ? (
                       <span className="text-muted fst-italic">
-                        Generating response...
+                        <SkeletonLoading />
+                        <SkeletonLoading variant="rectangular" />
+                        <SkeletonLoading variant="card" />
                       </span>
                     ) : response ? (
                       response
